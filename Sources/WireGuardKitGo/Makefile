@@ -112,7 +112,7 @@ $(DESTDIR)/WireGuard.xcframework: $(DESTDIR)/macOS/$(MACOS_FRAMEWORK_NAME)
 
 clean:
 	@echo "$(LOG_STATUS_COLOR)Cleaning build artifacts$(RESET)"
-	rm -rf "$(BUILDDIR)" "$(DESTDIR)/$(MACOS_LIBRARY_NAME)" "$(DESTDIR)/wireguard-go-version.h $(DESTDIR)/WireGuard.xcframework"
+	rm -rf "$(BUILDDIR)" "$(DESTDIR)"
 
 install: build
 
