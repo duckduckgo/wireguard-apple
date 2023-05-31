@@ -28,7 +28,7 @@ LIPO ?= lipo
 DESTDIR ?= $(CONFIGURATION_BUILD_DIR)
 BUILDDIR ?= $(CONFIGURATION_TEMP_DIR)/wireguard-go-bridge
 
-CFLAGS_PREFIX := -mmacosx-version-min=10.15 -isysroot $(MACOS_SDKROOT) -arch
+MACOS_CFLAGS_PREFIX := -mmacosx-version-min=10.15 -isysroot $(MACOS_SDKROOT) -arch
 IOS_CFLAGS_PREFIX := $(if $(DEPLOYMENT_TARGET_CLANG_FLAG_NAME),-$(DEPLOYMENT_TARGET_CLANG_FLAG_NAME)=$($(DEPLOYMENT_TARGET_CLANG_ENV_NAME)),) -isysroot $(IOS_SDKROOT) -arch
 GOARCH_arm64 := arm64
 GOARCH_x86_64 := amd64
@@ -58,8 +58,8 @@ $(GOROOT)/.prepared:
 
 define libwg-go-macos-a
 $(BUILDDIR)/libwg-go-macos-$(1).a: export CGO_ENABLED := 1
-$(BUILDDIR)/libwg-go-macos-$(1).a: export CGO_CFLAGS := $(CFLAGS_PREFIX) $(ARCH)
-$(BUILDDIR)/libwg-go-macos-$(1).a: export CGO_LDFLAGS := $(CFLAGS_PREFIX) $(ARCH)
+$(BUILDDIR)/libwg-go-macos-$(1).a: export CGO_CFLAGS := $(MACOS_CFLAGS_PREFIX) $(ARCH)
+$(BUILDDIR)/libwg-go-macos-$(1).a: export CGO_LDFLAGS := $(MACOS_CFLAGS_PREFIX) $(ARCH)
 $(BUILDDIR)/libwg-go-macos-$(1).a: export GOOS := $(GOOS_$(MACOS_PLATFORM_NAME))
 $(BUILDDIR)/libwg-go-macos-$(1).a: export GOARCH := $(GOARCH_$(1))
 $(BUILDDIR)/libwg-go-macos-$(1).a: $(GOROOT)/.prepared go.mod
