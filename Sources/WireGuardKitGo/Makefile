@@ -9,11 +9,13 @@ IOS_PLATFORM_NAME ?= iphoneos
 
 IOS_ARCH_PLATFORM_PAIRS := arm64-iphoneos # x86_64-iphonesimulator
 
+FRAMEWORK_NAME := WireGuard.framework
+
 MACOS_LIBRARY_NAME ?= libwg-go-macos.a
-MACOS_FRAMEWORK_DESTINATION ?= macOS/WireGuard.framework
-MACOS_FRAMEWORK_NAME ?= WireGuard.framework
+MACOS_FRAMEWORK_DESTINATION ?= macOS/$(FRAMEWORK_NAME)
 
 IOS_BINARY_NAME ?= libwg-go-ios.a
+IOS_FRAMEWORK_DESTINATION ?= iOS/$(FRAMEWORK_NAME)
 
 MACOS_SDKROOT ?= $(shell xcrun --sdk $(MACOS_PLATFORM_NAME) --show-sdk-path)
 IOS_SDKROOT ?= $(shell xcrun --sdk $(IOS_PLATFORM_NAME) --show-sdk-path)
@@ -94,20 +96,31 @@ $(DESTDIR)/$(IOS_BINARY_NAME): $(foreach PAIR,$(IOS_ARCH_PLATFORM_PAIRS),$(BUILD
 	@mkdir -vp "$(DESTDIR)"
 	@cp $^ $@
 
-$(DESTDIR)/macOS/$(MACOS_FRAMEWORK_NAME): $(DESTDIR)/$(MACOS_LIBRARY_NAME)
-	@echo "$(LOG_STATUS_COLOR)Building framework: $@$(RESET)"
+$(DESTDIR)/macOS/$(FRAMEWORK_NAME): $(DESTDIR)/$(MACOS_LIBRARY_NAME)
+	@echo "$(LOG_STATUS_COLOR)Building macOS framework: $@$(RESET)"
 
-	@mkdir -vp "$(DESTDIR)/macOS/$(MACOS_FRAMEWORK_NAME)/Headers"
-	@mkdir -vp "$(DESTDIR)/macOS/$(MACOS_FRAMEWORK_NAME)/Modules"
+	@mkdir -vp "$(DESTDIR)/macOS/$(FRAMEWORK_NAME)/Headers"
+	@mkdir -vp "$(DESTDIR)/macOS/$(FRAMEWORK_NAME)/Modules"
 
 	@cp Info.plist $@
 	@cp include/wireguard.h $@/Headers
 	@cp include/module.modulemap $@/Modules
 	@cp $^ $@/WireGuard
 
-$(DESTDIR)/WireGuard.xcframework: $(DESTDIR)/macOS/$(MACOS_FRAMEWORK_NAME)
+$(DESTDIR)/iOS/$(FRAMEWORK_NAME): $(DESTDIR)/$(IOS_BINARY_NAME)
+	@echo "$(LOG_STATUS_COLOR)Building iOS framework: $@$(RESET)"
+
+	@mkdir -vp "$(DESTDIR)/iOS/$(FRAMEWORK_NAME)/Headers"
+	@mkdir -vp "$(DESTDIR)/iOS/$(FRAMEWORK_NAME)/Modules"
+
+	@cp Info.plist $@
+	@cp include/wireguard.h $@/Headers
+	@cp include/module.modulemap $@/Modules
+	@cp $^ $@/WireGuard
+
+$(DESTDIR)/WireGuard.xcframework: $(DESTDIR)/macOS/$(FRAMEWORK_NAME) $(DESTDIR)/iOS/$(FRAMEWORK_NAME)
 	@echo "$(LOG_STATUS_COLOR)Creating XCFramework$(RESET)"
-	xcodebuild -create-xcframework -framework $(DESTDIR)/macOS/$(MACOS_FRAMEWORK_NAME) -output $(DESTDIR)/WireGuard.xcframework
+	xcodebuild -create-xcframework -framework $(DESTDIR)/macOS/$(FRAMEWORK_NAME) -framework $(DESTDIR)/iOS/$(FRAMEWORK_NAME) -output $(DESTDIR)/WireGuard.xcframework
 
 clean:
 	@echo "$(LOG_STATUS_COLOR)Cleaning build artifacts$(RESET)"
