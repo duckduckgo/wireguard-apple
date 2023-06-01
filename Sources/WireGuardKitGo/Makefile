@@ -5,10 +5,9 @@
 # These are generally passed to us by xcode, but we set working defaults for standalone compilation too.
 MACOS_ARCHS ?= x86_64 arm64
 MACOS_PLATFORM_NAME ?= macosx
-
-IOS_ARCHS ?= arm64
 IOS_PLATFORM_NAME ?= iphoneos
-IPHONESIMULATOR_PLATFORM_NAME ?= iphonesimulator
+
+IOS_ARCH_PLATFORM_PAIRS := arm64-iphoneos # x86_64-iphonesimulator
 
 MACOS_LIBRARY_NAME ?= libwg-go-macos.a
 MACOS_FRAMEWORK_DESTINATION ?= macOS/WireGuard.framework
@@ -29,7 +28,7 @@ DESTDIR ?= $(CONFIGURATION_BUILD_DIR)
 BUILDDIR ?= $(CONFIGURATION_TEMP_DIR)/wireguard-go-bridge
 
 MACOS_CFLAGS_PREFIX := -mmacosx-version-min=10.15 -isysroot $(MACOS_SDKROOT) -arch
-IOS_CFLAGS_PREFIX := $(if $(DEPLOYMENT_TARGET_CLANG_FLAG_NAME),-$(DEPLOYMENT_TARGET_CLANG_FLAG_NAME)=$($(DEPLOYMENT_TARGET_CLANG_ENV_NAME)),) -isysroot $(IOS_SDKROOT) -arch
+IOS_CFLAGS_PREFIX := -mios-version-min=14.0 -isysroot $(IOS_SDKROOT) -arch
 GOARCH_arm64 := arm64
 GOARCH_x86_64 := amd64
 GOOS_macosx := darwin
@@ -69,16 +68,16 @@ endef
 $(foreach ARCH,$(MACOS_ARCHS),$(eval $(call libwg-go-macos-a,$(ARCH))))
 
 define libwg-go-ios-a
-$(BUILDDIR)/libwg-go-ios-$(1).a: export CGO_ENABLED := 1
-$(BUILDDIR)/libwg-go-ios-$(1).a: export CGO_CFLAGS := $(IOS_CFLAGS_PREFIX) $(ARCH)
-$(BUILDDIR)/libwg-go-ios-$(1).a: export CGO_LDFLAGS := $(IOS_CFLAGS_PREFIX) $(ARCH)
-$(BUILDDIR)/libwg-go-ios-$(1).a: export GOOS := $(GOOS_$(IOS_PLATFORM_NAME))
-$(BUILDDIR)/libwg-go-ios-$(1).a: export GOARCH := $(GOARCH_$(1))
-$(BUILDDIR)/libwg-go-ios-$(1).a: $(GOROOT)/.prepared go.mod
-	@echo "$(LOG_STATUS_COLOR)Creating libwg-go-ios-$(1)$(RESET)"
-	go build -ldflags=-w -trimpath -v -o "$(BUILDDIR)/libwg-go-ios-$(1).a" -buildmode c-archive
+$(BUILDDIR)/libwg-go-ios-$(word 1,$(subst -, ,$(1))).a: export CGO_ENABLED := 1
+$(BUILDDIR)/libwg-go-ios-$(word 1,$(subst -, ,$(1))).a: export CGO_CFLAGS := $(IOS_CFLAGS_PREFIX) $(word 1,$(subst -, ,$(1)))
+$(BUILDDIR)/libwg-go-ios-$(word 1,$(subst -, ,$(1))).a: export CGO_LDFLAGS := $(IOS_CFLAGS_PREFIX) $(word 1,$(subst -, ,$(1)))
+$(BUILDDIR)/libwg-go-ios-$(word 1,$(subst -, ,$(1))).a: export GOOS := $(GOOS_$(word 2,$(subst -, ,$(1))))
+$(BUILDDIR)/libwg-go-ios-$(word 1,$(subst -, ,$(1))).a: export GOARCH := $(GOARCH_$(word 1,$(subst -, ,$(1))))
+$(BUILDDIR)/libwg-go-ios-$(word 1,$(subst -, ,$(1))).a: $(GOROOT)/.prepared go.mod
+	@echo "$(LOG_STATUS_COLOR)Creating libwg-go-ios-$(word 1,$(subst -, ,$(1))) with platform $(word 2,$(subst -, ,$(1)))$(RESET)"
+	go build -ldflags=-w -trimpath -v -o "$(BUILDDIR)/libwg-go-ios-$(word 1,$(subst -, ,$(1))).a" -buildmode c-archive
 endef
-$(foreach ARCH,$(IOS_ARCHS),$(eval $(call libwg-go-ios-a,$(ARCH))))
+$(foreach PAIR,$(IOS_ARCH_PLATFORM_PAIRS),$(eval $(call libwg-go-ios-a,$(PAIR))))
 
 $(DESTDIR)/wireguard-go-version.h: go.mod $(GOROOT)/.prepared
 	 sed -E -n 's/.*golang\.zx2c4\.com\/wireguard +v[0-9.]+-[0-9]+-([0-9a-f]{8})[0-9a-f]{4}.*/#define WIREGUARD_GO_VERSION "\1"/p' "$<" > "$@"
@@ -90,7 +89,7 @@ $(DESTDIR)/$(MACOS_LIBRARY_NAME): $(foreach ARCH,$(MACOS_ARCHS),$(BUILDDIR)/libw
 	@mkdir -vp "$(DESTDIR)"
 	$(LIPO) -create -output "$@" $^
 
-$(DESTDIR)/$(IOS_BINARY_NAME): $(foreach ARCH,$(IOS_ARCHS),$(BUILDDIR)/libwg-go-ios-$(ARCH).a)
+$(DESTDIR)/$(IOS_BINARY_NAME): $(foreach PAIR,$(IOS_ARCH_PLATFORM_PAIRS),$(BUILDDIR)/libwg-go-ios-$(word 1,$(subst -, ,$(PAIR))).a)
 	@echo "$(LOG_STATUS_COLOR)Combining architectures into $@$(RESET)"
 	@mkdir -vp "$(DESTDIR)"
 	@cp $^ $@
