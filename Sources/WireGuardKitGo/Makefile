@@ -40,18 +40,13 @@ GOARCH_arm64 := arm64
 GOARCH_x86_64 := amd64
 GOOS_macosx := darwin
 GOOS_iphoneos := ios
-
-UNAME := $(shell uname -m)
-ifeq ($(UNAME), $(GOARCH_arm64))
-	GOOS_iphonesimulator := ios
-endif
+GOOS_iphonesimulator := ios
 
 LOG_STATUS_COLOR := $(shell tput setaf 2; tput bold)
 LOG_ERROR_COLOR := $(shell tput setaf 1; tput bold)
 RESET := $(shell tput sgr0)
 
 build: $(DESTDIR)/$(MACOS_LIBRARY_NAME) $(DESTDIR)/$(IOS_BINARY_NAME) $(DESTDIR)/$(IOS_SIM_BINARY_NAME) $(DESTDIR)/WireGuard-macOS.xcframework $(DESTDIR)/WireGuard-iOS.xcframework
-build-framework: $(DESTDIR)/macOS/$(MACOS_FRAMEWORK_NAME)
 
 version-header: $(DESTDIR)/wireguard-go-version.h
 xcframework: $(DESTDIR)/WireGuard.xcframework
@@ -123,6 +118,8 @@ $(DESTDIR)/$(IOS_SIM_BINARY_NAME): $(foreach PAIR,$(IOS_SIM_ARCH_PLATFORM_PAIRS)
 	@mkdir -vp "$(DESTDIR)"
 	$(LIPO) -create -output "$@" $^
 
+# Create frameworks:
+
 $(DESTDIR)/macOS/$(FRAMEWORK_NAME): $(DESTDIR)/$(MACOS_LIBRARY_NAME)
 	@echo "$(LOG_STATUS_COLOR)Building macOS framework: $@$(RESET)"
 
@@ -145,14 +142,13 @@ $(DESTDIR)/iOS/$(FRAMEWORK_NAME): $(DESTDIR)/$(IOS_BINARY_NAME)
 	@cp include-framework/module.modulemap $@/Modules
 	@cp $^ $@/WireGuard
 
-$(DESTDIR)/WireGuard-macOS.xcframework: $(DESTDIR)/macOS/$(FRAMEWORK_NAME) $(DESTDIR)/iOS/$(FRAMEWORK_NAME)
-	@echo "$(LOG_STATUS_COLOR)Creating XCFramework for macOS $(RESET)"
-	xcodebuild -create-xcframework -framework $(DESTDIR)/macOS/$(FRAMEWORK_NAME) -output $(DESTDIR)/WireGuard-macOS.xcframework
+# Zip it all up in an XCFramework:
 
-$(DESTDIR)/WireGuard-iOS.xcframework: $(DESTDIR)/macOS/$(FRAMEWORK_NAME) $(DESTDIR)/iOS/$(FRAMEWORK_NAME)
-	@echo "$(LOG_STATUS_COLOR)Creating XCFramework for iOS $(RESET)"
-	xcodebuild -create-xcframework -library $(DESTDIR)/$(IOS_BINARY_NAME) -headers include-library -library $(DESTDIR)/$(IOS_SIM_BINARY_NAME) -headers include-library -output $(DESTDIR)/WireGuard-iOS.xcframework
-	# xcodebuild -create-xcframework -framework $(DESTDIR)/iOS/$(FRAMEWORK_NAME) -output $(DESTDIR)/WireGuard-iOS.xcframework
+$(DESTDIR)/WireGuard.xcframework: $(DESTDIR)/macOS/$(FRAMEWORK_NAME) $(DESTDIR)/iOS/$(FRAMEWORK_NAME)
+	@echo "$(LOG_STATUS_COLOR)Creating XCFramework$(RESET)"
+	xcodebuild -create-xcframework -framework $(DESTDIR)/macOS/$(FRAMEWORK_NAME) -framework $(DESTDIR)/iOS/$(FRAMEWORK_NAME) -output $(DESTDIR)/WireGuard.xcframework
+
+# Useful actions:
 
 clean:
 	@echo "$(LOG_STATUS_COLOR)Cleaning build artifacts$(RESET)"
@@ -160,4 +156,4 @@ clean:
 
 install: build
 
-.PHONY: build build-framework clean install version-header xcframework
+.PHONY: build clean install version-header xcframework
