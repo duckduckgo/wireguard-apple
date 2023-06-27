@@ -29,13 +29,15 @@ CONFIGURATION_TEMP_DIR ?= $(CURDIR)/.tmp
 
 export PATH := $(PATH):/usr/local/bin:/opt/homebrew/bin
 export CC ?= clang
+
 LIPO ?= lipo
 DESTDIR ?= $(CONFIGURATION_BUILD_DIR)
 BUILDDIR ?= $(CONFIGURATION_TEMP_DIR)/wireguard-go-bridge
 
 MACOS_CFLAGS_PREFIX := -mmacosx-version-min=10.15 -isysroot $(MACOS_SDKROOT) -arch
 IOS_CFLAGS_PREFIX := -miphoneos-version-min=14.0 -isysroot $(IOS_SDKROOT) -arch
-IOS_SIMULATOR_CFLAGS_PREFIX := -miphoneos-version-min=14.0 -isysroot $(IOS_SIMULATOR_SDKROOT) -arch
+IOS_SIMULATOR_CFLAGS_PREFIX := -miphonesimulator-version-min=14.0 -isysroot $(IOS_SIMULATOR_SDKROOT) -arch
+
 GOARCH_arm64 := arm64
 GOARCH_x86_64 := amd64
 GOOS_macosx := darwin
