@@ -17,8 +17,10 @@ MACOS_LIBRARY_NAME ?= libwg-go-macos.a
 MACOS_FRAMEWORK_DESTINATION ?= macOS/$(FRAMEWORK_NAME)
 
 IOS_BINARY_NAME ?= libwg-go-ios.a
-IOS_SIM_BINARY_NAME ?= libwg-go-ios-sim.a
 IOS_FRAMEWORK_DESTINATION ?= iOS/$(FRAMEWORK_NAME)
+
+IOS_SIM_BINARY_NAME ?= libwg-go-ios-sim.a
+IOS_SIM_FRAMEWORK_DESTINATION ?= Simulator/$(FRAMEWORK_NAME)
 
 MACOS_SDKROOT ?= $(shell xcrun --sdk $(MACOS_PLATFORM_NAME) --show-sdk-path)
 IOS_SDKROOT ?= $(shell xcrun --sdk $(IOS_PLATFORM_NAME) --show-sdk-path)
@@ -48,7 +50,7 @@ LOG_STATUS_COLOR := $(shell tput setaf 2; tput bold)
 LOG_ERROR_COLOR := $(shell tput setaf 1; tput bold)
 RESET := $(shell tput sgr0)
 
-build: $(DESTDIR)/$(MACOS_LIBRARY_NAME) $(DESTDIR)/$(IOS_BINARY_NAME) $(DESTDIR)/$(IOS_SIM_BINARY_NAME) $(DESTDIR)/WireGuard-macOS.xcframework $(DESTDIR)/WireGuard-iOS.xcframework
+build: $(DESTDIR)/$(MACOS_LIBRARY_NAME) $(DESTDIR)/$(IOS_BINARY_NAME) $(DESTDIR)/$(IOS_SIM_BINARY_NAME) $(DESTDIR)/WireGuard.xcframework
 
 version-header: $(DESTDIR)/wireguard-go-version.h
 xcframework: $(DESTDIR)/WireGuard.xcframework
@@ -111,12 +113,12 @@ $(DESTDIR)/$(MACOS_LIBRARY_NAME): $(foreach ARCH,$(MACOS_ARCHS),$(BUILDDIR)/libw
 	$(LIPO) -create -output "$@" $^
 
 $(DESTDIR)/$(IOS_BINARY_NAME): $(foreach PAIR,$(IOS_ARCH_PLATFORM_PAIRS),$(BUILDDIR)/libwg-go-ios-$(word 1,$(subst -, ,$(PAIR))).a)
-	@echo "$(LOG_STATUS_COLOR)Combining iOS device architectures into $@$(RESET)"
+	@echo "$(LOG_STATUS_COLOR)Combining iOS device architectures from $^ into $@$(RESET)"
 	@mkdir -vp "$(DESTDIR)"
 	@cp $^ $@
 
 $(DESTDIR)/$(IOS_SIM_BINARY_NAME): $(foreach PAIR,$(IOS_SIM_ARCH_PLATFORM_PAIRS),$(BUILDDIR)/libwg-go-ios-sim-$(word 1,$(subst -, ,$(PAIR))).a)
-	@echo "$(LOG_STATUS_COLOR)Combining simulator architectures into $@$(RESET)"
+	@echo "$(LOG_STATUS_COLOR)Combining simulator architectures from $^ into $@$(RESET)"
 	@mkdir -vp "$(DESTDIR)"
 	$(LIPO) -create -output "$@" $^
 
@@ -134,7 +136,7 @@ $(DESTDIR)/macOS/$(FRAMEWORK_NAME): $(DESTDIR)/$(MACOS_LIBRARY_NAME)
 	@cp $^ $@/WireGuard
 
 $(DESTDIR)/iOS/$(FRAMEWORK_NAME): $(DESTDIR)/$(IOS_BINARY_NAME)
-	@echo "$(LOG_STATUS_COLOR)Building iOS library: $@$(RESET)"
+	@echo "$(LOG_STATUS_COLOR)Building iOS framework: $@$(RESET)"
 
 	@mkdir -vp "$(DESTDIR)/iOS/$(FRAMEWORK_NAME)/Headers"
 	@mkdir -vp "$(DESTDIR)/iOS/$(FRAMEWORK_NAME)/Modules"
@@ -144,11 +146,22 @@ $(DESTDIR)/iOS/$(FRAMEWORK_NAME): $(DESTDIR)/$(IOS_BINARY_NAME)
 	@cp include-framework/module.modulemap $@/Modules
 	@cp $^ $@/WireGuard
 
+$(DESTDIR)/Simulator/$(FRAMEWORK_NAME): $(DESTDIR)/$(IOS_SIM_BINARY_NAME)
+	@echo "$(LOG_STATUS_COLOR)Building iOS simulator framework: $@$(RESET)"
+
+	@mkdir -vp "$(DESTDIR)/Simulator/$(FRAMEWORK_NAME)/Headers"
+	@mkdir -vp "$(DESTDIR)/Simulator/$(FRAMEWORK_NAME)/Modules"
+
+	@cp Info.plist $@
+	@cp include-framework/wireguard.h $@/Headers
+	@cp include-framework/module.modulemap $@/Modules
+	@cp $^ $@/WireGuard
+
 # Zip it all up in an XCFramework:
 
-$(DESTDIR)/WireGuard.xcframework: $(DESTDIR)/macOS/$(FRAMEWORK_NAME) $(DESTDIR)/iOS/$(FRAMEWORK_NAME)
+$(DESTDIR)/WireGuard.xcframework: $(DESTDIR)/macOS/$(FRAMEWORK_NAME) $(DESTDIR)/iOS/$(FRAMEWORK_NAME) $(DESTDIR)/Simulator/$(FRAMEWORK_NAME)
 	@echo "$(LOG_STATUS_COLOR)Creating XCFramework$(RESET)"
-	xcodebuild -create-xcframework -framework $(DESTDIR)/macOS/$(FRAMEWORK_NAME) -framework $(DESTDIR)/iOS/$(FRAMEWORK_NAME) -output $(DESTDIR)/WireGuard.xcframework
+	xcodebuild -create-xcframework -framework $(DESTDIR)/macOS/$(FRAMEWORK_NAME) -framework $(DESTDIR)/iOS/$(FRAMEWORK_NAME) -framework $(DESTDIR)/Simulator/$(FRAMEWORK_NAME) -output $(DESTDIR)/WireGuard.xcframework
 
 # Useful actions:
 
