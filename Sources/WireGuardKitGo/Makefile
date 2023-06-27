@@ -109,12 +109,12 @@ $(DESTDIR)/$(MACOS_LIBRARY_NAME): $(foreach ARCH,$(MACOS_ARCHS),$(BUILDDIR)/libw
 	$(LIPO) -create -output "$@" $^
 
 $(DESTDIR)/$(IOS_BINARY_NAME): $(foreach PAIR,$(IOS_ARCH_PLATFORM_PAIRS),$(BUILDDIR)/libwg-go-ios-$(word 1,$(subst -, ,$(PAIR))).a)
-	@echo "$(LOG_STATUS_COLOR)Combining architectures into $@$(RESET)"
+	@echo "$(LOG_STATUS_COLOR)Combining iOS device architectures into $@$(RESET)"
 	@mkdir -vp "$(DESTDIR)"
 	@cp $^ $@
 
 $(DESTDIR)/$(IOS_SIM_BINARY_NAME): $(foreach PAIR,$(IOS_SIM_ARCH_PLATFORM_PAIRS),$(BUILDDIR)/libwg-go-ios-sim-$(word 1,$(subst -, ,$(PAIR))).a)
-	@echo "$(LOG_STATUS_COLOR)Combining architectures into $@$(RESET)"
+	@echo "$(LOG_STATUS_COLOR)Combining simulator architectures into $@$(RESET)"
 	@mkdir -vp "$(DESTDIR)"
 	$(LIPO) -create -output "$@" $^
 
