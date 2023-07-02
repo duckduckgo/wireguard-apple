@@ -6,6 +6,7 @@ import PackageDescription
 let package = Package(
     name: "WireGuardKit",
     platforms: [
+        .iOS(.v14),
         .macOS(.v10_15),
     ],
     products: [
@@ -14,8 +15,8 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "WireGuard",
-            url: "https://github.com/DuckDuckGo/wireguard-apple/releases/download/1.0.0/WireGuard.xcframework.zip",
-            checksum: "06845e28d1d71f53fadb074d999d5141768dcaeba0d0dc3dcc7e2399641bcd3f"
+            url: "https://github.com/DuckDuckGo/wireguard-apple/releases/download/1.1.0/WireGuard.xcframework.zip",
+            checksum: "778df46d1523a90a526fb3c13e25c4569287a9e3459896f056f1246beddc4a0d"
         ),
         .target(name: "_WireGuardDummy")
     ]
