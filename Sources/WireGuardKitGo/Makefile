@@ -8,10 +8,12 @@ MACOS_PLATFORM_NAME ?= macosx
 IOS_PLATFORM_NAME ?= iphoneos
 IOS_SIMULATOR_PLATFORM_NAME ?= iphonesimulator
 TVOS_PLATFORM_NAME ?= appletvos
+TVOS_SIMULATOR_PLATFORM_NAME ?= appletvsimulator
 
 IOS_ARCH_PLATFORM_PAIRS := arm64-iphoneos
 IOS_SIM_ARCH_PLATFORM_PAIRS := arm64-iphonesimulator x86_64-iphonesimulator
 TVOS_ARCH_PLATFORMS_PAIRS := arm64-appletvos
+TVOS_SIM_ARCH_PLATFORMS_PAIRS := arm64-appletvsimulator
 
 FRAMEWORK_NAME := WireGuard.framework
 
@@ -22,15 +24,19 @@ IOS_BINARY_NAME ?= libwg-go-ios.a
 IOS_FRAMEWORK_DESTINATION ?= iOS/$(FRAMEWORK_NAME)
 
 IOS_SIM_BINARY_NAME ?= libwg-go-ios-sim.a
-IOS_SIM_FRAMEWORK_DESTINATION ?= Simulator/$(FRAMEWORK_NAME)
+IOS_SIM_FRAMEWORK_DESTINATION ?= iOS-Simulator/$(FRAMEWORK_NAME)
 
 TVOS_BINARY_NAME ?= libwg-go-tvos.a
 TVOS_FRAMEWORK_DESTINATION ?= tvOS/$(FRAMEWORK_NAME)
 
+TVOS_SIM_BINARY_NAME ?= libwg-go-tvos-sim.a
+TVOS_SIM_FRAMEWORK_DESTINATION ?= tvOS-Simulator/$(FRAMEWORK_NAME)
+
 MACOS_SDKROOT ?= $(shell xcrun --sdk $(MACOS_PLATFORM_NAME) --show-sdk-path)
 IOS_SDKROOT ?= $(shell xcrun --sdk $(IOS_PLATFORM_NAME) --show-sdk-path)
 IOS_SIMULATOR_SDKROOT ?= $(shell xcrun --sdk $(IOS_SIMULATOR_PLATFORM_NAME) --show-sdk-path)
-TVOS_SIMULATOR_SDKROOT ?= $(shell xcrun --sdk $(TVOS_PLATFORM_NAME) --show-sdk-path)
+TVOS_SDKROOT ?= $(shell xcrun --sdk $(TVOS_PLATFORM_NAME) --show-sdk-path)
+TVOS_SIMULATOR_SDKROOT ?= $(shell xcrun --sdk $(TVOS_SIMULATOR_PLATFORM_NAME) --show-sdk-path)
 
 CONFIGURATION_BUILD_DIR ?= $(CURDIR)/out
 CONFIGURATION_TEMP_DIR ?= $(CURDIR)/.tmp
@@ -45,7 +51,8 @@ BUILDDIR ?= $(CONFIGURATION_TEMP_DIR)/wireguard-go-bridge
 MACOS_CFLAGS_PREFIX := -mmacosx-version-min=10.15 -isysroot $(MACOS_SDKROOT) -arch
 IOS_CFLAGS_PREFIX := -miphoneos-version-min=14.0 -isysroot $(IOS_SDKROOT) -arch
 IOS_SIMULATOR_CFLAGS_PREFIX := -miphonesimulator-version-min=14.0 -isysroot $(IOS_SIMULATOR_SDKROOT) -arch
-TVOS_CFLAGS_PREFIX := -mtvos-version-min=14.0 -isysroot $(TVOS_SIMULATOR_SDKROOT) -arch
+TVOS_CFLAGS_PREFIX := -mtvos-version-min=14.0 -isysroot $(TVOS_SDKROOT) -arch
+TVOS_SIMULATOR_CFLAGS_PREFIX := -mtvos-simulator-version-min=14.0 -isysroot $(TVOS_SIMULATOR_SDKROOT) -arch
 
 GOARCH_arm64 := arm64
 GOARCH_x86_64 := amd64
@@ -53,12 +60,13 @@ GOOS_macosx := darwin
 GOOS_iphoneos := ios
 GOOS_iphonesimulator := ios
 GOOS_appletvos := ios
+GOOS_appletvsimulator := ios
 
 LOG_STATUS_COLOR := $(shell tput setaf 2; tput bold)
 LOG_ERROR_COLOR := $(shell tput setaf 1; tput bold)
 RESET := $(shell tput sgr0)
 
-build: $(DESTDIR)/$(MACOS_LIBRARY_NAME) $(DESTDIR)/$(IOS_BINARY_NAME) $(DESTDIR)/$(IOS_SIM_BINARY_NAME) $(DESTDIR)/$(TVOS_BINARY_NAME) $(DESTDIR)/WireGuard.xcframework
+build: $(DESTDIR)/$(MACOS_LIBRARY_NAME) $(DESTDIR)/$(IOS_BINARY_NAME) $(DESTDIR)/$(IOS_SIM_BINARY_NAME) $(DESTDIR)/$(TVOS_BINARY_NAME) $(DESTDIR)/$(TVOS_SIM_BINARY_NAME) $(DESTDIR)/WireGuard.xcframework
 
 version-header: $(DESTDIR)/wireguard-go-version.h
 xcframework: $(DESTDIR)/WireGuard.xcframework
@@ -122,6 +130,18 @@ $(BUILDDIR)/libwg-go-tvos-$(word 1,$(subst -, ,$(1))).a: $(GOROOT)/.prepared go.
 endef
 $(foreach PAIR,$(TVOS_ARCH_PLATFORMS_PAIRS),$(eval $(call libwg-go-tvos-a,$(PAIR))))
 
+define libwg-go-tvos-sim-a
+$(BUILDDIR)/libwg-go-tvos-sim-$(word 1,$(subst -, ,$(1))).a: export CGO_ENABLED := 1
+$(BUILDDIR)/libwg-go-tvos-sim-$(word 1,$(subst -, ,$(1))).a: export CGO_CFLAGS := $(TVOS_SIMULATOR_CFLAGS_PREFIX) $(word 1,$(subst -, ,$(1)))
+$(BUILDDIR)/libwg-go-tvos-sim-$(word 1,$(subst -, ,$(1))).a: export CGO_LDFLAGS := $(TVOS_SIMULATOR_CFLAGS_PREFIX) $(word 1,$(subst -, ,$(1)))
+$(BUILDDIR)/libwg-go-tvos-sim-$(word 1,$(subst -, ,$(1))).a: export GOOS := $(GOOS_$(word 2,$(subst -, ,$(1))))
+$(BUILDDIR)/libwg-go-tvos-sim-$(word 1,$(subst -, ,$(1))).a: export GOARCH := $(GOARCH_$(word 1,$(subst -, ,$(1))))
+$(BUILDDIR)/libwg-go-tvos-sim-$(word 1,$(subst -, ,$(1))).a: $(GOROOT)/.prepared go.mod
+	@echo "$(LOG_STATUS_COLOR)Creating libwg-go-tvos-sim-$(word 1,$(subst -, ,$(1))) with platform $(word 2,$(subst -, ,$(1)))$(RESET)"
+	go build -ldflags=-w -trimpath -v -o "$(BUILDDIR)/libwg-go-tvos-sim-$(word 1,$(subst -, ,$(1))).a" -buildmode c-archive
+endef
+$(foreach PAIR,$(TVOS_SIM_ARCH_PLATFORMS_PAIRS),$(eval $(call libwg-go-tvos-sim-a,$(PAIR))))
+
 $(DESTDIR)/wireguard-go-version.h: go.mod $(GOROOT)/.prepared
 	 sed -E -n 's/.*golang\.zx2c4\.com\/wireguard +v[0-9.]+-[0-9]+-([0-9a-f]{8})[0-9a-f]{4}.*/#define WIREGUARD_GO_VERSION "\1"/p' "$<" > "$@"
 
@@ -138,12 +158,17 @@ $(DESTDIR)/$(IOS_BINARY_NAME): $(foreach PAIR,$(IOS_ARCH_PLATFORM_PAIRS),$(BUILD
 	@cp $^ $@
 
 $(DESTDIR)/$(IOS_SIM_BINARY_NAME): $(foreach PAIR,$(IOS_SIM_ARCH_PLATFORM_PAIRS),$(BUILDDIR)/libwg-go-ios-sim-$(word 1,$(subst -, ,$(PAIR))).a)
-	@echo "$(LOG_STATUS_COLOR)Combining simulator architectures from $^ into $@$(RESET)"
+	@echo "$(LOG_STATUS_COLOR)Combining iOS simulator architectures from $^ into $@$(RESET)"
 	@mkdir -vp "$(DESTDIR)"
 	$(LIPO) -create -output "$@" $^
 
 $(DESTDIR)/$(TVOS_BINARY_NAME): $(foreach PAIR,$(TVOS_ARCH_PLATFORMS_PAIRS),$(BUILDDIR)/libwg-go-tvos-$(word 1,$(subst -, ,$(PAIR))).a)
 	@echo "$(LOG_STATUS_COLOR)Combining tvOS device architectures from $^ into $@$(RESET)"
+	@mkdir -vp "$(DESTDIR)"
+	@cp $^ $@
+
+$(DESTDIR)/$(TVOS_SIM_BINARY_NAME): $(foreach PAIR,$(TVOS_SIM_ARCH_PLATFORMS_PAIRS),$(BUILDDIR)/libwg-go-tvos-sim-$(word 1,$(subst -, ,$(PAIR))).a)
+	@echo "$(LOG_STATUS_COLOR)Combining tvOS simulator architectures from $^ into $@$(RESET)"
 	@mkdir -vp "$(DESTDIR)"
 	@cp $^ $@
 
@@ -171,11 +196,11 @@ $(DESTDIR)/iOS/$(FRAMEWORK_NAME): $(DESTDIR)/$(IOS_BINARY_NAME)
 	@cp include-framework/module.modulemap $@/Modules
 	@cp $^ $@/WireGuard
 
-$(DESTDIR)/Simulator/$(FRAMEWORK_NAME): $(DESTDIR)/$(IOS_SIM_BINARY_NAME)
+$(DESTDIR)/iOS-Simulator/$(FRAMEWORK_NAME): $(DESTDIR)/$(IOS_SIM_BINARY_NAME)
 	@echo "$(LOG_STATUS_COLOR)Building iOS simulator framework: $@$(RESET)"
 
-	@mkdir -vp "$(DESTDIR)/Simulator/$(FRAMEWORK_NAME)/Headers"
-	@mkdir -vp "$(DESTDIR)/Simulator/$(FRAMEWORK_NAME)/Modules"
+	@mkdir -vp "$(DESTDIR)/iOS-Simulator/$(FRAMEWORK_NAME)/Headers"
+	@mkdir -vp "$(DESTDIR)/iOS-Simulator/$(FRAMEWORK_NAME)/Modules"
 
 	@cp Info.plist $@
 	@cp include-framework/wireguard.h $@/Headers
@@ -193,11 +218,22 @@ $(DESTDIR)/tvOS/$(FRAMEWORK_NAME): $(DESTDIR)/$(TVOS_BINARY_NAME)
 	@cp include-framework/module.modulemap $@/Modules
 	@cp $^ $@/WireGuard
 
+$(DESTDIR)/tvOS-Simulator/$(FRAMEWORK_NAME): $(DESTDIR)/$(TVOS_SIM_BINARY_NAME)
+	@echo "$(LOG_STATUS_COLOR)Building tvOS Simulator framework: $@$(RESET)"
+
+	@mkdir -vp "$(DESTDIR)/tvOS-Simulator/$(FRAMEWORK_NAME)/Headers"
+	@mkdir -vp "$(DESTDIR)/tvOS-Simulator/$(FRAMEWORK_NAME)/Modules"
+
+	@cp Info.plist $@
+	@cp include-framework/wireguard.h $@/Headers
+	@cp include-framework/module.modulemap $@/Modules
+	@cp $^ $@/WireGuard
+
 # Zip it all up in an XCFramework:
 
-$(DESTDIR)/WireGuard.xcframework: $(DESTDIR)/macOS/$(FRAMEWORK_NAME) $(DESTDIR)/iOS/$(FRAMEWORK_NAME) $(DESTDIR)/Simulator/$(FRAMEWORK_NAME)
+$(DESTDIR)/WireGuard.xcframework: $(DESTDIR)/macOS/$(FRAMEWORK_NAME) $(DESTDIR)/iOS/$(FRAMEWORK_NAME) $(DESTDIR)/iOS-Simulator/$(FRAMEWORK_NAME) $(DESTDIR)/tvOS/$(FRAMEWORK_NAME) $(DESTDIR)/tvOS-Simulator/$(FRAMEWORK_NAME)
 	@echo "$(LOG_STATUS_COLOR)Creating XCFramework$(RESET)"
-	xcodebuild -create-xcframework -framework $(DESTDIR)/macOS/$(FRAMEWORK_NAME) -framework $(DESTDIR)/iOS/$(FRAMEWORK_NAME) -framework $(DESTDIR)/Simulator/$(FRAMEWORK_NAME) -output $(DESTDIR)/WireGuard.xcframework
+	xcodebuild -create-xcframework -framework $(DESTDIR)/macOS/$(FRAMEWORK_NAME) -framework $(DESTDIR)/iOS/$(FRAMEWORK_NAME) -framework $(DESTDIR)/iOS-Simulator/$(FRAMEWORK_NAME) -framework $(DESTDIR)/tvOS/$(FRAMEWORK_NAME) -framework $(DESTDIR)/tvOS-Simulator/$(FRAMEWORK_NAME) -output $(DESTDIR)/WireGuard.xcframework
 
 # Useful actions:
 
