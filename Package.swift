@@ -15,8 +15,8 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "WireGuard",
-            url: "https://github.com/DuckDuckGo/wireguard-apple/releases/download/1.1.1/WireGuard.xcframework.zip",
-            checksum: "068099fd1ad6c1ff8c3493d4bf8e5d7610b1f82722c967cf00e5dd6558a25417"
+            url: "https://github.com/DuckDuckGo/wireguard-apple/releases/download/1.1.2/WireGuard.xcframework.zip",
+            checksum: "68434186e998f6cd75c0fd840b0b82847eb18737f8bf94eaf9f6bb4b35239dcc"
         ),
         .target(name: "_WireGuardDummy")
     ]
