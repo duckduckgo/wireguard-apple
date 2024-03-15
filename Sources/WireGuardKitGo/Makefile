@@ -168,13 +168,22 @@ $(DESTDIR)/iOS/$(FRAMEWORK_NAME): $(DESTDIR)/$(IOS_BINARY_NAME)
 $(DESTDIR)/Simulator/$(FRAMEWORK_NAME): $(DESTDIR)/$(IOS_SIM_BINARY_NAME)
 	@echo "$(LOG_STATUS_COLOR)Building iOS simulator framework: $@$(RESET)"
 
-	@mkdir -vp "$(DESTDIR)/Simulator/$(FRAMEWORK_NAME)/Headers"
-	@mkdir -vp "$(DESTDIR)/Simulator/$(FRAMEWORK_NAME)/Modules"
+	@mkdir -vp $@/Versions
+	@mkdir -vp $@/Versions/A
+	@mkdir -vp $@/Versions/A/Headers
+	@mkdir -vp $@/Versions/A/Modules
+	@mkdir -vp $@/Versions/A/Resources
 
-	@cp Info.plist $@
-	@cp include-framework/wireguard.h $@/Headers
-	@cp include-framework/module.modulemap $@/Modules
-	@cp $^ $@/WireGuard
+	@cp Info.plist $@/Versions/A/Resources
+	@cp include-framework/wireguard.h $@/Versions/A/Headers
+	@cp include-framework/module.modulemap $@/Versions/A/Modules/module.modulemap
+	@cp $^ $@/Versions/A/WireGuard
+
+	@cd out/Simulator/$(FRAMEWORK_NAME)/Versions && ln -sfhv A Current
+	@cd out/Simulator/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Headers Headers
+	@cd out/Simulator/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Modules Modules
+	@cd out/Simulator/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Resources Resources
+	@cd out/Simulator/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/WireGuard WireGuard
 
 # Zip it all up in an XCFramework:
 
