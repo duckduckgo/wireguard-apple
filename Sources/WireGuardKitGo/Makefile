@@ -51,6 +51,7 @@ LOG_ERROR_COLOR := $(shell tput setaf 1; tput bold)
 RESET := $(shell tput sgr0)
 
 build: $(DESTDIR)/$(MACOS_LIBRARY_NAME) $(DESTDIR)/$(IOS_BINARY_NAME) $(DESTDIR)/$(IOS_SIM_BINARY_NAME) $(DESTDIR)/WireGuard.xcframework
+build-macos-framework: $(DESTDIR)/macOS/$(FRAMEWORK_NAME)
 
 version-header: $(DESTDIR)/wireguard-go-version.h
 xcframework: $(DESTDIR)/WireGuard.xcframework
@@ -127,24 +128,42 @@ $(DESTDIR)/$(IOS_SIM_BINARY_NAME): $(foreach PAIR,$(IOS_SIM_ARCH_PLATFORM_PAIRS)
 $(DESTDIR)/macOS/$(FRAMEWORK_NAME): $(DESTDIR)/$(MACOS_LIBRARY_NAME)
 	@echo "$(LOG_STATUS_COLOR)Building macOS framework: $@$(RESET)"
 
-	@mkdir -vp "$(DESTDIR)/macOS/$(FRAMEWORK_NAME)/Headers"
-	@mkdir -vp "$(DESTDIR)/macOS/$(FRAMEWORK_NAME)/Modules"
+	@mkdir -vp $@/Versions
+	@mkdir -vp $@/Versions/A
+	@mkdir -vp $@/Versions/A/Headers
+	@mkdir -vp $@/Versions/A/Modules
+	@mkdir -vp $@/Versions/A/Resources
 
-	@cp Info.plist $@
-	@cp include-framework/wireguard.h $@/Headers
-	@cp include-framework/module.modulemap $@/Modules/module.modulemap
-	@cp $^ $@/WireGuard
+	@cp Info.plist $@/Versions/A/Resources
+	@cp include-framework/wireguard.h $@/Versions/A/Headers
+	@cp include-framework/module.modulemap $@/Versions/A/Modules/module.modulemap
+	@cp $^ $@/Versions/A/WireGuard
+
+	@cd out/macOS/$(FRAMEWORK_NAME)/Versions && ln -sfhv A Current
+	@cd out/macOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Headers Headers
+	@cd out/macOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Modules Modules
+	@cd out/macOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Resources Resources
+	@cd out/macOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/WireGuard WireGuard
 
 $(DESTDIR)/iOS/$(FRAMEWORK_NAME): $(DESTDIR)/$(IOS_BINARY_NAME)
 	@echo "$(LOG_STATUS_COLOR)Building iOS framework: $@$(RESET)"
 
-	@mkdir -vp "$(DESTDIR)/iOS/$(FRAMEWORK_NAME)/Headers"
-	@mkdir -vp "$(DESTDIR)/iOS/$(FRAMEWORK_NAME)/Modules"
+	@mkdir -vp $@/Versions
+	@mkdir -vp $@/Versions/A
+	@mkdir -vp $@/Versions/A/Headers
+	@mkdir -vp $@/Versions/A/Modules
+	@mkdir -vp $@/Versions/A/Resources
 
-	@cp Info.plist $@
-	@cp include-framework/wireguard.h $@/Headers
-	@cp include-framework/module.modulemap $@/Modules
-	@cp $^ $@/WireGuard
+	@cp Info.plist $@/Versions/A/Resources
+	@cp include-framework/wireguard.h $@/Versions/A/Headers
+	@cp include-framework/module.modulemap $@/Versions/A/Modules/module.modulemap
+	@cp $^ $@/Versions/A/WireGuard
+
+	@cd out/iOS/$(FRAMEWORK_NAME)/Versions && ln -sfhv A Current
+	@cd out/iOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Headers Headers
+	@cd out/iOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Modules Modules
+	@cd out/iOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Resources Resources
+	@cd out/iOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/WireGuard WireGuard
 
 $(DESTDIR)/Simulator/$(FRAMEWORK_NAME): $(DESTDIR)/$(IOS_SIM_BINARY_NAME)
 	@echo "$(LOG_STATUS_COLOR)Building iOS simulator framework: $@$(RESET)"
