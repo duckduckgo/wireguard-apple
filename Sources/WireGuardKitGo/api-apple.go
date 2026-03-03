@@ -33,6 +33,61 @@ import (
 var loggerFunc unsafe.Pointer
 var loggerCtx unsafe.Pointer
 
+// SocketPairTun wraps a plain file descriptor (e.g. socketpair) as a tun.Device.
+// Unlike NativeTun, it does NOT require a real utun — no ioctl validation.
+// Read/Write handle the 4-byte AF header identically to NativeTun.
+type SocketPairTun struct {
+	file   *os.File
+	events chan tun.Event
+	mtu    int
+}
+
+func CreateTUNFromSocketPair(fd int) tun.Device {
+	t := &SocketPairTun{
+		file:   os.NewFile(uintptr(fd), "socketpair-tun"),
+		events: make(chan tun.Event, 10),
+		mtu:    1420,
+	}
+	t.events <- tun.EventUp
+	return t
+}
+
+func (t *SocketPairTun) File() *os.File          { return t.file }
+func (t *SocketPairTun) Name() (string, error)   { return "relay0", nil }
+func (t *SocketPairTun) Events() <-chan tun.Event { return t.events }
+func (t *SocketPairTun) MTU() (int, error)        { return t.mtu, nil }
+func (t *SocketPairTun) Flush() error             { return nil }
+
+func (t *SocketPairTun) Close() error {
+	close(t.events)
+	return t.file.Close()
+}
+
+func (t *SocketPairTun) Read(buf []byte, offset int) (int, error) {
+	// Read from socketpair. Data includes 4-byte AF header (written by Swift relay).
+	// Place the read so that the IP packet starts at buf[offset:].
+	buf = buf[offset-4:]
+	n, err := t.file.Read(buf)
+	if n < 4 {
+		return 0, err
+	}
+	return n - 4, err
+}
+
+func (t *SocketPairTun) Write(buf []byte, offset int) (int, error) {
+	// Prepend 4-byte AF header before writing to socketpair.
+	buf = buf[offset-4:]
+	buf[0] = 0x00
+	buf[1] = 0x00
+	buf[2] = 0x00
+	if buf[4]>>4 == 6 {
+		buf[3] = unix.AF_INET6
+	} else {
+		buf[3] = unix.AF_INET
+	}
+	return t.file.Write(buf)
+}
+
 type CLogger int
 
 func cstring(s string) *C.char {
@@ -100,14 +155,9 @@ func wgTurnOn(settings *C.char, tunFd int32) int32 {
 		unix.Close(dupTunFd)
 		return -1
 	}
-	tun, err := tun.CreateTUNFromFile(os.NewFile(uintptr(dupTunFd), "/dev/tun"), 0)
-	if err != nil {
-		logger.Errorf("Unable to create new tun device from fd: %v", err)
-		unix.Close(dupTunFd)
-		return -1
-	}
-	logger.Verbosef("Attaching to interface")
-	dev := device.NewDevice(tun, conn.NewStdNetBind(), logger)
+	tunDevice := CreateTUNFromSocketPair(dupTunFd)
+	logger.Verbosef("Attaching to interface (socketpair relay)")
+	dev := device.NewDevice(tunDevice, conn.NewStdNetBind(), logger)
 
 	err = dev.IpcSet(C.GoString(settings))
 	if err != nil {
