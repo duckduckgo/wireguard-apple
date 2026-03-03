@@ -6,35 +6,19 @@ import PackageDescription
 let package = Package(
     name: "WireGuardKit",
     platforms: [
-        .macOS(.v12),
-        .iOS(.v15)
+        .iOS(.v14),
+        .macOS(.v10_15),
     ],
     products: [
-        .library(name: "WireGuardKit", targets: ["WireGuardKit"])
+        .library(name: "WireGuard", targets: ["WireGuard", "_WireGuardDummy"]),
     ],
-    dependencies: [],
     targets: [
-        .target(
-            name: "WireGuardKit",
-            dependencies: ["WireGuardKitGo", "WireGuardKitC"]
+        .binaryTarget(
+            name: "WireGuard",
+            url: "https://github.com/duckduckgo/wireguard-apple/releases/download/1.1.4-relay-poc-v4/WireGuard.xcframework.zip",
+            checksum: "37cf93ac8cb05b2aacac93f8ab38f262f8a27022fc6e972a17238c1b6e44e1e4"
         ),
-        .target(
-            name: "WireGuardKitC",
-            dependencies: [],
-            publicHeadersPath: "."
-        ),
-        .target(
-            name: "WireGuardKitGo",
-            dependencies: [],
-            exclude: [
-                "goruntime-boottime-over-monotonic.diff",
-                "go.mod",
-                "go.sum",
-                "api-apple.go",
-                "Makefile"
-            ],
-            publicHeadersPath: ".",
-            linkerSettings: [.linkedLibrary("wg-go")]
-        )
+        .target(name: "_WireGuardDummy")
     ]
+
 )

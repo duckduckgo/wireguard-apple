@@ -11,9 +11,15 @@ package main
 // {
 // 	((void(*)(void *, int, const char *))func)(ctx, level, msg);
 // }
+// static void callPacketBatchCallback(void *func, void *ctx, const void *buf, int total_len, int count)
+// {
+// 	((void(*)(void *, const void *, int, int))func)(ctx, buf, total_len, count);
+// }
 import "C"
 
 import (
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -21,6 +27,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -32,6 +39,122 @@ import (
 
 var loggerFunc unsafe.Pointer
 var loggerCtx unsafe.Pointer
+
+// ChannelTun implements tun.Device using Go channels instead of file descriptors.
+// Swift pushes packets in via wgReceivePacket (→ inbound channel → RoutineReadFromTUN).
+// Go pushes packets out via a Swift callback (RoutineSequentialReceiver → tun.Write → callback).
+type ChannelTun struct {
+	inbound  chan []byte // Swift → Go (packets from the app, outbound to VPN)
+	closed   chan struct{}
+	events   chan tun.Event
+	mtu      int
+
+	callbackFunc unsafe.Pointer // Swift function pointer for inbound packets (Go → Swift)
+	callbackCtx  unsafe.Pointer // Swift context for the callback
+	callbackMu   sync.RWMutex
+
+	pendingOut   []byte // length-prefixed batch buffer for outbound packets
+	pendingCount int
+	pendingMu    sync.Mutex // guards pendingOut/pendingCount (multiple RoutineSequentialReceiver goroutines)
+}
+
+// tunnelHandles maps handle IDs to running tunnels.
+var tunnelHandles = make(map[int32]tunnelHandle)
+
+// channelTuns maps handle IDs to their ChannelTun, so wgReceivePacket can find them.
+var channelTuns = make(map[int32]*ChannelTun)
+
+func CreateChannelTun() *ChannelTun {
+	t := &ChannelTun{
+		inbound:    make(chan []byte, 1024),
+		closed:     make(chan struct{}),
+		events:     make(chan tun.Event, 10),
+		mtu:        1420,
+		pendingOut: make([]byte, 0, 65536), // 64KB pre-allocated batch buffer
+	}
+	t.events <- tun.EventUp
+	return t
+}
+
+func (t *ChannelTun) File() *os.File          { return nil }
+func (t *ChannelTun) Name() (string, error)   { return "channel0", nil }
+func (t *ChannelTun) Events() <-chan tun.Event { return t.events }
+func (t *ChannelTun) MTU() (int, error)       { return t.mtu, nil }
+// Flush sends the accumulated batch of packets to Swift via the registered callback.
+func (t *ChannelTun) Flush() error {
+	t.pendingMu.Lock()
+	defer t.pendingMu.Unlock()
+
+	if t.pendingCount == 0 {
+		return nil
+	}
+
+	fn := t.callbackFunc
+	ctx := t.callbackCtx
+	count := t.pendingCount
+	totalLen := len(t.pendingOut)
+
+	// Reset before callback to allow reuse of backing array
+	t.pendingCount = 0
+	buf := t.pendingOut
+	t.pendingOut = buf[:0]
+
+	if uintptr(fn) == 0 {
+		// No callback registered — discard silently
+		return nil
+	}
+
+	C.callPacketBatchCallback(fn, ctx, unsafe.Pointer(&buf[0]), C.int(totalLen), C.int(count))
+	return nil
+}
+
+func (t *ChannelTun) Close() error {
+	select {
+	case <-t.closed:
+		// already closed
+	default:
+		close(t.closed)
+	}
+	close(t.events)
+
+	t.pendingMu.Lock()
+	t.pendingOut = nil
+	t.pendingMu.Unlock()
+
+	return nil
+}
+
+// Read blocks until a packet is available from Swift (via wgReceivePacket).
+// Called by WireGuard's RoutineReadFromTUN.
+func (t *ChannelTun) Read(buf []byte, offset int) (int, error) {
+	select {
+	case <-t.closed:
+		return 0, errors.New("channel tun closed")
+	case pkt := <-t.inbound:
+		n := copy(buf[offset:], pkt)
+		return n, nil
+	}
+}
+
+// Write appends a decrypted packet to the pending batch buffer.
+// Called by WireGuard's RoutineSequentialReceiver. Flush() sends the batch to Swift.
+func (t *ChannelTun) Write(buf []byte, offset int) (int, error) {
+	pkt := buf[offset:]
+	if len(pkt) == 0 {
+		return 0, nil
+	}
+
+	var hdr [2]byte
+	binary.LittleEndian.PutUint16(hdr[:], uint16(len(pkt)))
+
+	t.pendingMu.Lock()
+	t.pendingOut = append(t.pendingOut, hdr[:]...)
+	t.pendingOut = append(t.pendingOut, pkt...)
+	t.pendingCount++
+	t.pendingMu.Unlock()
+
+	return len(pkt), nil
+}
 
 type CLogger int
 
@@ -55,8 +178,6 @@ type tunnelHandle struct {
 	*device.Device
 	*device.Logger
 }
-
-var tunnelHandles = make(map[int32]tunnelHandle)
 
 func init() {
 	signals := make(chan os.Signal)
@@ -88,31 +209,14 @@ func wgTurnOn(settings *C.char, tunFd int32) int32 {
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,
 	}
-	dupTunFd, err := unix.Dup(int(tunFd))
-	if err != nil {
-		logger.Errorf("Unable to dup tun fd: %v", err)
-		return -1
-	}
 
-	err = unix.SetNonblock(dupTunFd, true)
-	if err != nil {
-		logger.Errorf("Unable to set tun fd as non blocking: %v", err)
-		unix.Close(dupTunFd)
-		return -1
-	}
-	tun, err := tun.CreateTUNFromFile(os.NewFile(uintptr(dupTunFd), "/dev/tun"), 0)
-	if err != nil {
-		logger.Errorf("Unable to create new tun device from fd: %v", err)
-		unix.Close(dupTunFd)
-		return -1
-	}
-	logger.Verbosef("Attaching to interface")
-	dev := device.NewDevice(tun, conn.NewStdNetBind(), logger)
+	tunDev := CreateChannelTun()
+	logger.Verbosef("Attaching to interface (channel tun)")
+	dev := device.NewDevice(tunDev, conn.NewStdNetBind(), logger)
 
-	err = dev.IpcSet(C.GoString(settings))
+	err := dev.IpcSet(C.GoString(settings))
 	if err != nil {
 		logger.Errorf("Unable to set IPC settings: %v", err)
-		unix.Close(dupTunFd)
 		return -1
 	}
 
@@ -126,10 +230,10 @@ func wgTurnOn(settings *C.char, tunFd int32) int32 {
 		}
 	}
 	if i == math.MaxInt32 {
-		unix.Close(dupTunFd)
 		return -1
 	}
 	tunnelHandles[i] = tunnelHandle{dev, logger}
+	channelTuns[i] = tunDev
 	return i
 }
 
@@ -140,6 +244,7 @@ func wgTurnOff(tunnelHandle int32) {
 		return
 	}
 	delete(tunnelHandles, tunnelHandle)
+	delete(channelTuns, tunnelHandle)
 	dev.Close()
 }
 
@@ -200,6 +305,84 @@ func wgDisableSomeRoamingForBrokenMobileSemantics(tunnelHandle int32) {
 		return
 	}
 	dev.DisableSomeRoamingForBrokenMobileSemantics()
+}
+
+// wgReceivePacket is called by Swift to push a packet into WireGuard.
+// The packet data is copied into Go memory before returning.
+// Returns 0 on success, -1 if the tunnel is not found or closed.
+//
+//export wgReceivePacket
+func wgReceivePacket(handle int32, buf unsafe.Pointer, pktLen int32) int32 {
+	tunDev, ok := channelTuns[handle]
+	if !ok {
+		return -1
+	}
+
+	// Copy the packet from Swift memory into Go-managed memory
+	goPacket := make([]byte, pktLen)
+	copy(goPacket, (*[1 << 30]byte)(buf)[:pktLen:pktLen])
+
+	select {
+	case <-tunDev.closed:
+		return -1
+	case tunDev.inbound <- goPacket:
+		return 0
+	}
+}
+
+// wgReceivePackets is called by Swift to push a batch of length-prefixed packets into WireGuard.
+// Wire format: [uint16 LE len][packet bytes][uint16 LE len][packet bytes]...
+// Returns the number of packets successfully enqueued (non-blocking on full channel).
+//
+//export wgReceivePackets
+func wgReceivePackets(handle int32, buf unsafe.Pointer, totalLen int32) int32 {
+	tunDev, ok := channelTuns[handle]
+	if !ok {
+		return -1
+	}
+
+	data := (*[1 << 30]byte)(buf)[:totalLen:totalLen]
+	offset := 0
+	count := int32(0)
+
+	for offset+2 <= int(totalLen) {
+		pktLen := int(binary.LittleEndian.Uint16(data[offset:]))
+		offset += 2
+		if offset+pktLen > int(totalLen) {
+			break // corrupted frame
+		}
+
+		goPacket := make([]byte, pktLen)
+		copy(goPacket, data[offset:offset+pktLen])
+		offset += pktLen
+
+		select {
+		case <-tunDev.closed:
+			return count
+		case tunDev.inbound <- goPacket:
+			count++
+		default:
+			// Channel full — non-blocking, skip this packet
+		}
+	}
+
+	return count
+}
+
+// wgSetPacketCallback registers a Swift callback that receives batched packets from WireGuard.
+// The callback signature is: void callback(void *ctx, const void *buf, int total_len, int count)
+// Called from Go's RoutineSequentialReceiver goroutine — the callback must be thread-safe.
+//
+//export wgSetPacketCallback
+func wgSetPacketCallback(handle int32, ctx unsafe.Pointer, fn unsafe.Pointer) {
+	tunDev, ok := channelTuns[handle]
+	if !ok {
+		return
+	}
+	tunDev.callbackMu.Lock()
+	tunDev.callbackCtx = ctx
+	tunDev.callbackFunc = fn
+	tunDev.callbackMu.Unlock()
 }
 
 //export wgVersion
