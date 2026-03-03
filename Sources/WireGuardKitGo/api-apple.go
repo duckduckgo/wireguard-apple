@@ -44,10 +44,10 @@ var loggerCtx unsafe.Pointer
 // Swift pushes packets in via wgReceivePacket (→ inbound channel → RoutineReadFromTUN).
 // Go pushes packets out via a Swift callback (RoutineSequentialReceiver → tun.Write → callback).
 type ChannelTun struct {
-	inbound  chan []byte // Swift → Go (packets from the app, outbound to VPN)
-	closed   chan struct{}
-	events   chan tun.Event
-	mtu      int
+	inbound chan []byte // Swift → Go (packets from the app, outbound to VPN)
+	closed  chan struct{}
+	events  chan tun.Event
+	mtu     int
 
 	callbackFunc unsafe.Pointer // Swift function pointer for inbound packets (Go → Swift)
 	callbackCtx  unsafe.Pointer // Swift context for the callback
@@ -76,10 +76,11 @@ func CreateChannelTun() *ChannelTun {
 	return t
 }
 
-func (t *ChannelTun) File() *os.File          { return nil }
-func (t *ChannelTun) Name() (string, error)   { return "channel0", nil }
+func (t *ChannelTun) File() *os.File           { return nil }
+func (t *ChannelTun) Name() (string, error)    { return "channel0", nil }
 func (t *ChannelTun) Events() <-chan tun.Event { return t.events }
-func (t *ChannelTun) MTU() (int, error)       { return t.mtu, nil }
+func (t *ChannelTun) MTU() (int, error)        { return t.mtu, nil }
+
 // Flush sends the accumulated batch of packets to Swift via the registered callback.
 func (t *ChannelTun) Flush() error {
 	t.pendingMu.Lock()
@@ -89,8 +90,10 @@ func (t *ChannelTun) Flush() error {
 		return nil
 	}
 
+	t.callbackMu.RLock()
 	fn := t.callbackFunc
 	ctx := t.callbackCtx
+	t.callbackMu.RUnlock()
 	count := t.pendingCount
 	totalLen := len(t.pendingOut)
 
@@ -114,11 +117,12 @@ func (t *ChannelTun) Close() error {
 		// already closed
 	default:
 		close(t.closed)
+		close(t.events)
 	}
-	close(t.events)
 
 	t.pendingMu.Lock()
 	t.pendingOut = nil
+	t.pendingCount = 0
 	t.pendingMu.Unlock()
 
 	return nil

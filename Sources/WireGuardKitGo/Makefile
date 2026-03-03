@@ -139,11 +139,11 @@ $(DESTDIR)/macOS/$(FRAMEWORK_NAME): $(DESTDIR)/$(MACOS_LIBRARY_NAME)
 	@cp include-framework/module.modulemap $@/Versions/A/Modules/module.modulemap
 	@cp $^ $@/Versions/A/WireGuard
 
-	@cd out/macOS/$(FRAMEWORK_NAME)/Versions && ln -sfhv A Current
-	@cd out/macOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Headers Headers
-	@cd out/macOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Modules Modules
-	@cd out/macOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Resources Resources
-	@cd out/macOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/WireGuard WireGuard
+	@cd $(DESTDIR)/macOS/$(FRAMEWORK_NAME)/Versions && ln -sfhv A Current
+	@cd $(DESTDIR)/macOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Headers Headers
+	@cd $(DESTDIR)/macOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Modules Modules
+	@cd $(DESTDIR)/macOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Resources Resources
+	@cd $(DESTDIR)/macOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/WireGuard WireGuard
 
 $(DESTDIR)/iOS/$(FRAMEWORK_NAME): $(DESTDIR)/$(IOS_BINARY_NAME)
 	@echo "$(LOG_STATUS_COLOR)Building iOS framework: $@$(RESET)"
@@ -159,11 +159,11 @@ $(DESTDIR)/iOS/$(FRAMEWORK_NAME): $(DESTDIR)/$(IOS_BINARY_NAME)
 	@cp include-framework/module.modulemap $@/Versions/A/Modules/module.modulemap
 	@cp $^ $@/Versions/A/WireGuard
 
-	@cd out/iOS/$(FRAMEWORK_NAME)/Versions && ln -sfhv A Current
-	@cd out/iOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Headers Headers
-	@cd out/iOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Modules Modules
-	@cd out/iOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Resources Resources
-	@cd out/iOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/WireGuard WireGuard
+	@cd $(DESTDIR)/iOS/$(FRAMEWORK_NAME)/Versions && ln -sfhv A Current
+	@cd $(DESTDIR)/iOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Headers Headers
+	@cd $(DESTDIR)/iOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Modules Modules
+	@cd $(DESTDIR)/iOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Resources Resources
+	@cd $(DESTDIR)/iOS/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/WireGuard WireGuard
 
 $(DESTDIR)/Simulator/$(FRAMEWORK_NAME): $(DESTDIR)/$(IOS_SIM_BINARY_NAME)
 	@echo "$(LOG_STATUS_COLOR)Building iOS simulator framework: $@$(RESET)"
@@ -179,11 +179,11 @@ $(DESTDIR)/Simulator/$(FRAMEWORK_NAME): $(DESTDIR)/$(IOS_SIM_BINARY_NAME)
 	@cp include-framework/module.modulemap $@/Versions/A/Modules/module.modulemap
 	@cp $^ $@/Versions/A/WireGuard
 
-	@cd out/Simulator/$(FRAMEWORK_NAME)/Versions && ln -sfhv A Current
-	@cd out/Simulator/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Headers Headers
-	@cd out/Simulator/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Modules Modules
-	@cd out/Simulator/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Resources Resources
-	@cd out/Simulator/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/WireGuard WireGuard
+	@cd $(DESTDIR)/Simulator/$(FRAMEWORK_NAME)/Versions && ln -sfhv A Current
+	@cd $(DESTDIR)/Simulator/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Headers Headers
+	@cd $(DESTDIR)/Simulator/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Modules Modules
+	@cd $(DESTDIR)/Simulator/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/Resources Resources
+	@cd $(DESTDIR)/Simulator/$(FRAMEWORK_NAME) && ln -sfhv Versions/Current/WireGuard WireGuard
 
 # Zip it all up in an XCFramework:
 
