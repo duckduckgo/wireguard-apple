@@ -11,13 +11,14 @@ package main
 // {
 // 	((void(*)(void *, int, const char *))func)(ctx, level, msg);
 // }
-// static void callPacketCallback(void *func, void *ctx, const void *buf, int len)
+// static void callPacketBatchCallback(void *func, void *ctx, const void *buf, int total_len, int count)
 // {
-// 	((void(*)(void *, const void *, int))func)(ctx, buf, len);
+// 	((void(*)(void *, const void *, int, int))func)(ctx, buf, total_len, count);
 // }
 import "C"
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -51,6 +52,10 @@ type ChannelTun struct {
 	callbackFunc unsafe.Pointer // Swift function pointer for inbound packets (Go → Swift)
 	callbackCtx  unsafe.Pointer // Swift context for the callback
 	callbackMu   sync.RWMutex
+
+	pendingOut   []byte // length-prefixed batch buffer for outbound packets
+	pendingCount int
+	pendingMu    sync.Mutex // guards pendingOut/pendingCount (multiple RoutineSequentialReceiver goroutines)
 }
 
 // tunnelHandles maps handle IDs to running tunnels.
@@ -61,10 +66,11 @@ var channelTuns = make(map[int32]*ChannelTun)
 
 func CreateChannelTun() *ChannelTun {
 	t := &ChannelTun{
-		inbound: make(chan []byte, 1024),
-		closed:  make(chan struct{}),
-		events:  make(chan tun.Event, 10),
-		mtu:     1420,
+		inbound:    make(chan []byte, 1024),
+		closed:     make(chan struct{}),
+		events:     make(chan tun.Event, 10),
+		mtu:        1420,
+		pendingOut: make([]byte, 0, 65536), // 64KB pre-allocated batch buffer
 	}
 	t.events <- tun.EventUp
 	return t
@@ -74,7 +80,33 @@ func (t *ChannelTun) File() *os.File          { return nil }
 func (t *ChannelTun) Name() (string, error)   { return "channel0", nil }
 func (t *ChannelTun) Events() <-chan tun.Event { return t.events }
 func (t *ChannelTun) MTU() (int, error)       { return t.mtu, nil }
-func (t *ChannelTun) Flush() error            { return nil }
+// Flush sends the accumulated batch of packets to Swift via the registered callback.
+func (t *ChannelTun) Flush() error {
+	t.pendingMu.Lock()
+	defer t.pendingMu.Unlock()
+
+	if t.pendingCount == 0 {
+		return nil
+	}
+
+	fn := t.callbackFunc
+	ctx := t.callbackCtx
+	count := t.pendingCount
+	totalLen := len(t.pendingOut)
+
+	// Reset before callback to allow reuse of backing array
+	t.pendingCount = 0
+	buf := t.pendingOut
+	t.pendingOut = buf[:0]
+
+	if uintptr(fn) == 0 {
+		// No callback registered — discard silently
+		return nil
+	}
+
+	C.callPacketBatchCallback(fn, ctx, unsafe.Pointer(&buf[0]), C.int(totalLen), C.int(count))
+	return nil
+}
 
 func (t *ChannelTun) Close() error {
 	select {
@@ -84,6 +116,11 @@ func (t *ChannelTun) Close() error {
 		close(t.closed)
 	}
 	close(t.events)
+
+	t.pendingMu.Lock()
+	t.pendingOut = nil
+	t.pendingMu.Unlock()
+
 	return nil
 }
 
@@ -99,24 +136,23 @@ func (t *ChannelTun) Read(buf []byte, offset int) (int, error) {
 	}
 }
 
-// Write delivers a decrypted packet from WireGuard back to Swift via callback.
-// Called by WireGuard's RoutineSequentialReceiver.
+// Write appends a decrypted packet to the pending batch buffer.
+// Called by WireGuard's RoutineSequentialReceiver. Flush() sends the batch to Swift.
 func (t *ChannelTun) Write(buf []byte, offset int) (int, error) {
-	t.callbackMu.RLock()
-	fn := t.callbackFunc
-	ctx := t.callbackCtx
-	t.callbackMu.RUnlock()
-
-	if uintptr(fn) == 0 {
-		return 0, errors.New("no packet callback registered")
-	}
-
 	pkt := buf[offset:]
 	if len(pkt) == 0 {
 		return 0, nil
 	}
 
-	C.callPacketCallback(fn, ctx, unsafe.Pointer(&pkt[0]), C.int(len(pkt)))
+	var hdr [2]byte
+	binary.LittleEndian.PutUint16(hdr[:], uint16(len(pkt)))
+
+	t.pendingMu.Lock()
+	t.pendingOut = append(t.pendingOut, hdr[:]...)
+	t.pendingOut = append(t.pendingOut, pkt...)
+	t.pendingCount++
+	t.pendingMu.Unlock()
+
 	return len(pkt), nil
 }
 
@@ -294,8 +330,47 @@ func wgReceivePacket(handle int32, buf unsafe.Pointer, pktLen int32) int32 {
 	}
 }
 
-// wgSetPacketCallback registers a Swift callback that receives packets from WireGuard.
-// The callback signature is: void callback(void *ctx, const void *buf, int len)
+// wgReceivePackets is called by Swift to push a batch of length-prefixed packets into WireGuard.
+// Wire format: [uint16 LE len][packet bytes][uint16 LE len][packet bytes]...
+// Returns the number of packets successfully enqueued (non-blocking on full channel).
+//
+//export wgReceivePackets
+func wgReceivePackets(handle int32, buf unsafe.Pointer, totalLen int32) int32 {
+	tunDev, ok := channelTuns[handle]
+	if !ok {
+		return -1
+	}
+
+	data := (*[1 << 30]byte)(buf)[:totalLen:totalLen]
+	offset := 0
+	count := int32(0)
+
+	for offset+2 <= int(totalLen) {
+		pktLen := int(binary.LittleEndian.Uint16(data[offset:]))
+		offset += 2
+		if offset+pktLen > int(totalLen) {
+			break // corrupted frame
+		}
+
+		goPacket := make([]byte, pktLen)
+		copy(goPacket, data[offset:offset+pktLen])
+		offset += pktLen
+
+		select {
+		case <-tunDev.closed:
+			return count
+		case tunDev.inbound <- goPacket:
+			count++
+		default:
+			// Channel full — non-blocking, skip this packet
+		}
+	}
+
+	return count
+}
+
+// wgSetPacketCallback registers a Swift callback that receives batched packets from WireGuard.
+// The callback signature is: void callback(void *ctx, const void *buf, int total_len, int count)
 // Called from Go's RoutineSequentialReceiver goroutine — the callback must be thread-safe.
 //
 //export wgSetPacketCallback

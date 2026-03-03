@@ -11,7 +11,7 @@
 #include <stdbool.h>
 
 typedef void(*logger_fn_t)(void *context, int level, const char *msg);
-typedef void(*packet_callback_fn_t)(void *context, const void *buf, int len);
+typedef void(*packet_batch_callback_fn_t)(void *context, const void *buf, int total_len, int count);
 extern void wgSetLogger(void *context, logger_fn_t logger_fn);
 extern int wgTurnOn(const char *settings, int32_t tun_fd);
 extern void wgTurnOff(int handle);
@@ -21,6 +21,7 @@ extern void wgBumpSockets(int handle);
 extern void wgDisableSomeRoamingForBrokenMobileSemantics(int handle);
 extern const char *wgVersion();
 extern int32_t wgReceivePacket(int32_t handle, const void *buf, int32_t len);
-extern void wgSetPacketCallback(int32_t handle, void *context, packet_callback_fn_t callback);
+extern int32_t wgReceivePackets(int32_t handle, const void *buf, int32_t total_len);
+extern void wgSetPacketCallback(int32_t handle, void *context, packet_batch_callback_fn_t callback);
 
 #endif
