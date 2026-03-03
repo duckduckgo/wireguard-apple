@@ -11,9 +11,14 @@ package main
 // {
 // 	((void(*)(void *, int, const char *))func)(ctx, level, msg);
 // }
+// static void callPacketCallback(void *func, void *ctx, const void *buf, int len)
+// {
+// 	((void(*)(void *, const void *, int))func)(ctx, buf, len);
+// }
 import "C"
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -21,6 +26,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -33,59 +39,85 @@ import (
 var loggerFunc unsafe.Pointer
 var loggerCtx unsafe.Pointer
 
-// SocketPairTun wraps a plain file descriptor (e.g. socketpair) as a tun.Device.
-// Unlike NativeTun, it does NOT require a real utun — no ioctl validation.
-// Read/Write handle the 4-byte AF header identically to NativeTun.
-type SocketPairTun struct {
-	file   *os.File
-	events chan tun.Event
-	mtu    int
+// ChannelTun implements tun.Device using Go channels instead of file descriptors.
+// Swift pushes packets in via wgReceivePacket (→ inbound channel → RoutineReadFromTUN).
+// Go pushes packets out via a Swift callback (RoutineSequentialReceiver → tun.Write → callback).
+type ChannelTun struct {
+	inbound  chan []byte // Swift → Go (packets from the app, outbound to VPN)
+	closed   chan struct{}
+	events   chan tun.Event
+	mtu      int
+
+	callbackFunc unsafe.Pointer // Swift function pointer for inbound packets (Go → Swift)
+	callbackCtx  unsafe.Pointer // Swift context for the callback
+	callbackMu   sync.RWMutex
 }
 
-func CreateTUNFromSocketPair(fd int) tun.Device {
-	t := &SocketPairTun{
-		file:   os.NewFile(uintptr(fd), "socketpair-tun"),
-		events: make(chan tun.Event, 10),
-		mtu:    1420,
+// tunnelHandles maps handle IDs to running tunnels.
+var tunnelHandles = make(map[int32]tunnelHandle)
+
+// channelTuns maps handle IDs to their ChannelTun, so wgReceivePacket can find them.
+var channelTuns = make(map[int32]*ChannelTun)
+
+func CreateChannelTun() *ChannelTun {
+	t := &ChannelTun{
+		inbound: make(chan []byte, 1024),
+		closed:  make(chan struct{}),
+		events:  make(chan tun.Event, 10),
+		mtu:     1420,
 	}
 	t.events <- tun.EventUp
 	return t
 }
 
-func (t *SocketPairTun) File() *os.File          { return t.file }
-func (t *SocketPairTun) Name() (string, error)   { return "relay0", nil }
-func (t *SocketPairTun) Events() <-chan tun.Event { return t.events }
-func (t *SocketPairTun) MTU() (int, error)        { return t.mtu, nil }
-func (t *SocketPairTun) Flush() error             { return nil }
+func (t *ChannelTun) File() *os.File          { return nil }
+func (t *ChannelTun) Name() (string, error)   { return "channel0", nil }
+func (t *ChannelTun) Events() <-chan tun.Event { return t.events }
+func (t *ChannelTun) MTU() (int, error)       { return t.mtu, nil }
+func (t *ChannelTun) Flush() error            { return nil }
 
-func (t *SocketPairTun) Close() error {
+func (t *ChannelTun) Close() error {
+	select {
+	case <-t.closed:
+		// already closed
+	default:
+		close(t.closed)
+	}
 	close(t.events)
-	return t.file.Close()
+	return nil
 }
 
-func (t *SocketPairTun) Read(buf []byte, offset int) (int, error) {
-	// Read from socketpair. Data includes 4-byte AF header (written by Swift relay).
-	// Place the read so that the IP packet starts at buf[offset:].
-	buf = buf[offset-4:]
-	n, err := t.file.Read(buf)
-	if n < 4 {
-		return 0, err
+// Read blocks until a packet is available from Swift (via wgReceivePacket).
+// Called by WireGuard's RoutineReadFromTUN.
+func (t *ChannelTun) Read(buf []byte, offset int) (int, error) {
+	select {
+	case <-t.closed:
+		return 0, errors.New("channel tun closed")
+	case pkt := <-t.inbound:
+		n := copy(buf[offset:], pkt)
+		return n, nil
 	}
-	return n - 4, err
 }
 
-func (t *SocketPairTun) Write(buf []byte, offset int) (int, error) {
-	// Prepend 4-byte AF header before writing to socketpair.
-	buf = buf[offset-4:]
-	buf[0] = 0x00
-	buf[1] = 0x00
-	buf[2] = 0x00
-	if buf[4]>>4 == 6 {
-		buf[3] = unix.AF_INET6
-	} else {
-		buf[3] = unix.AF_INET
+// Write delivers a decrypted packet from WireGuard back to Swift via callback.
+// Called by WireGuard's RoutineSequentialReceiver.
+func (t *ChannelTun) Write(buf []byte, offset int) (int, error) {
+	t.callbackMu.RLock()
+	fn := t.callbackFunc
+	ctx := t.callbackCtx
+	t.callbackMu.RUnlock()
+
+	if uintptr(fn) == 0 {
+		return 0, errors.New("no packet callback registered")
 	}
-	return t.file.Write(buf)
+
+	pkt := buf[offset:]
+	if len(pkt) == 0 {
+		return 0, nil
+	}
+
+	C.callPacketCallback(fn, ctx, unsafe.Pointer(&pkt[0]), C.int(len(pkt)))
+	return len(pkt), nil
 }
 
 type CLogger int
@@ -110,8 +142,6 @@ type tunnelHandle struct {
 	*device.Device
 	*device.Logger
 }
-
-var tunnelHandles = make(map[int32]tunnelHandle)
 
 func init() {
 	signals := make(chan os.Signal)
@@ -143,26 +173,14 @@ func wgTurnOn(settings *C.char, tunFd int32) int32 {
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,
 	}
-	dupTunFd, err := unix.Dup(int(tunFd))
-	if err != nil {
-		logger.Errorf("Unable to dup tun fd: %v", err)
-		return -1
-	}
 
-	err = unix.SetNonblock(dupTunFd, true)
-	if err != nil {
-		logger.Errorf("Unable to set tun fd as non blocking: %v", err)
-		unix.Close(dupTunFd)
-		return -1
-	}
-	tunDevice := CreateTUNFromSocketPair(dupTunFd)
-	logger.Verbosef("Attaching to interface (socketpair relay)")
-	dev := device.NewDevice(tunDevice, conn.NewStdNetBind(), logger)
+	tunDev := CreateChannelTun()
+	logger.Verbosef("Attaching to interface (channel tun)")
+	dev := device.NewDevice(tunDev, conn.NewStdNetBind(), logger)
 
-	err = dev.IpcSet(C.GoString(settings))
+	err := dev.IpcSet(C.GoString(settings))
 	if err != nil {
 		logger.Errorf("Unable to set IPC settings: %v", err)
-		unix.Close(dupTunFd)
 		return -1
 	}
 
@@ -176,10 +194,10 @@ func wgTurnOn(settings *C.char, tunFd int32) int32 {
 		}
 	}
 	if i == math.MaxInt32 {
-		unix.Close(dupTunFd)
 		return -1
 	}
 	tunnelHandles[i] = tunnelHandle{dev, logger}
+	channelTuns[i] = tunDev
 	return i
 }
 
@@ -190,6 +208,7 @@ func wgTurnOff(tunnelHandle int32) {
 		return
 	}
 	delete(tunnelHandles, tunnelHandle)
+	delete(channelTuns, tunnelHandle)
 	dev.Close()
 }
 
@@ -250,6 +269,45 @@ func wgDisableSomeRoamingForBrokenMobileSemantics(tunnelHandle int32) {
 		return
 	}
 	dev.DisableSomeRoamingForBrokenMobileSemantics()
+}
+
+// wgReceivePacket is called by Swift to push a packet into WireGuard.
+// The packet data is copied into Go memory before returning.
+// Returns 0 on success, -1 if the tunnel is not found or closed.
+//
+//export wgReceivePacket
+func wgReceivePacket(handle int32, buf unsafe.Pointer, pktLen int32) int32 {
+	tunDev, ok := channelTuns[handle]
+	if !ok {
+		return -1
+	}
+
+	// Copy the packet from Swift memory into Go-managed memory
+	goPacket := make([]byte, pktLen)
+	copy(goPacket, (*[1 << 30]byte)(buf)[:pktLen:pktLen])
+
+	select {
+	case <-tunDev.closed:
+		return -1
+	case tunDev.inbound <- goPacket:
+		return 0
+	}
+}
+
+// wgSetPacketCallback registers a Swift callback that receives packets from WireGuard.
+// The callback signature is: void callback(void *ctx, const void *buf, int len)
+// Called from Go's RoutineSequentialReceiver goroutine — the callback must be thread-safe.
+//
+//export wgSetPacketCallback
+func wgSetPacketCallback(handle int32, ctx unsafe.Pointer, fn unsafe.Pointer) {
+	tunDev, ok := channelTuns[handle]
+	if !ok {
+		return
+	}
+	tunDev.callbackMu.Lock()
+	tunDev.callbackCtx = ctx
+	tunDev.callbackFunc = fn
+	tunDev.callbackMu.Unlock()
 }
 
 //export wgVersion
